@@ -8,6 +8,9 @@ from codrone_edu.drone import Drone
 model_url = "https://tfhub.dev/google/movenet/singlepose/lightning/4"
 model = hub.load(model_url)
 
+# Access the model's 'signatures' for inference
+movenet = model.signatures['serving_default']
+
 # Initialize the drone
 drone = Drone()
 drone.pair()
@@ -20,11 +23,17 @@ cap = cv2.VideoCapture(0)  # Replace with your drone camera feed if necessary
 def detect_pose(frame):
     # Resize the frame to 192x192 for MoveNet model input
     input_frame = cv2.resize(frame, (192, 192))
+    
+    # Convert the frame to a TensorFlow tensor and normalize the pixel values
     input_frame = np.expand_dims(input_frame, axis=0).astype(np.float32)
+    input_frame = tf.convert_to_tensor(input_frame)
     input_frame = input_frame / 255.0  # Normalize image
+    
+    # Convert the tensor to int32 type as expected by MoveNet
+    input_frame = tf.cast(input_frame, dtype=tf.int32)  # Convert to int32
 
-    # Run inference with the model
-    output = model(input_frame) 
+    # Run inference with the model (use the 'serving_default' signature)
+    output = movenet(input_frame)
 
     # Extract keypoints from the output
     keypoints = output['output_0'].numpy().squeeze()
@@ -35,12 +44,16 @@ prev_keypoints = None
 
 motion_threshold = 0.05  # Threshold to trigger drone actions
 
+# Variable to track the drone's air status (use a flag to manually track air status)
+drone_in_air = False
+
 print("Starting pose detection...")
 
 while True:
     # Capture frame-by-frame
     ret, frame = cap.read()
     if not ret:
+        print("Failed to capture frame")
         break
 
     # Flip the frame to make it a mirror image
@@ -69,11 +82,14 @@ while True:
 
         # Trigger drone action if significant motion is detected
         if significant_motion_detected:
-            if not drone.is_in_air():
+            if not drone_in_air:
+                # Take off if not already in air
                 drone.takeoff()
                 drone.up()
+                drone_in_air = True  # Mark the drone as in air
                 print("Motion detected - Drone in the air!")
             else:
+                # Move the drone forward or perform other actions
                 drone.forward()
                 print("Moving forward in response to motion!")
 
@@ -90,20 +106,3 @@ while True:
 # Release the capture and close windows
 cap.release()
 cv2.destroyAllWindows()
-
-
-
-
-
-# drone = Drone()
-# drone.pair()
-# print("Paired!")
-# drone.takeoff()
-# drone.up()
-# drone.flip()
-# print("In the air!")
-# print("Landing")
-# drone.land()
-# drone.close()
-# print("Program complete")
-
