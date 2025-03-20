@@ -3,8 +3,9 @@ import tensorflow as tf
 import tensorflow_hub as hub
 import numpy as np
 from codrone_edu.drone import Drone
+import time
 
-# Load MoveNet model using TensorFlow Hub
+# Load MoveNet model using TensorFlow Hub (singlepose lightning model)
 model_url = "https://tfhub.dev/google/movenet/singlepose/lightning/4"
 model = hub.load(model_url)
 
@@ -24,14 +25,12 @@ def detect_pose(frame):
     # Resize the frame to 192x192 for MoveNet model input
     input_frame = cv2.resize(frame, (192, 192))
     
-    # Convert the frame to a TensorFlow tensor and normalize the pixel values
-    input_frame = np.expand_dims(input_frame, axis=0).astype(np.float32)
-    input_frame = tf.convert_to_tensor(input_frame)
-    input_frame = input_frame / 255.0  # Normalize image
+    # Convert the frame to a TensorFlow tensor and change dtype to int32
+    input_frame = np.expand_dims(input_frame, axis=0).astype(np.int32)  # Change to int32
     
-    # Convert the tensor to int32 type as expected by MoveNet
-    input_frame = tf.cast(input_frame, dtype=tf.int32)  # Convert to int32
-
+    # Convert it to a tensor
+    input_frame = tf.convert_to_tensor(input_frame)
+    
     # Run inference with the model (use the 'serving_default' signature)
     output = movenet(input_frame)
 
@@ -39,16 +38,59 @@ def detect_pose(frame):
     keypoints = output['output_0'].numpy().squeeze()
     return keypoints
 
-# Variables to track previous pose positions
-prev_keypoints = None
+# Function to visualize and debug keypoints
+def draw_keypoints(frame, keypoints):
+    for i, keypoint in enumerate(keypoints):
+        x, y, confidence = keypoint
+        if confidence > 0.1:  # Show all keypoints with at least 0.1 confidence
+            # Draw a circle at each keypoint for better visibility
+            cv2.circle(frame, (int(x * frame.shape[1]), int(y * frame.shape[0])), 5, (0, 255, 0), -1)
+    return frame
 
-motion_threshold = 0.05  # Threshold to trigger drone actions
-
-# Variable to track the drone's air status (use a flag to manually track air status)
+# Variable to track the drone's air status
 drone_in_air = False
+prev_arm_y = None  # Variable to track the previous arm position
 
-print("Starting pose detection...")
+# Function to detect arm position and control drone (takeoff/land)
+def detect_arm_and_control(keypoints):
+    global drone_in_air, prev_arm_y
 
+    # Get the keypoints for the left arm (elbow and wrist)
+    left_elbow = keypoints[7]  # Left elbow
+    left_wrist = keypoints[9]  # Left wrist
+    
+    # Extract coordinates and confidence from keypoints
+    left_elbow_x, left_elbow_y, left_elbow_conf = left_elbow
+    left_wrist_x, left_wrist_y, left_wrist_conf = left_wrist
+
+    # Debugging output for keypoints
+    print(f"Left Elbow: {left_elbow}")
+    print(f"Left Wrist: {left_wrist}")
+
+    # Ensure the wrist or elbow is visible (confidence > 0.1)
+    if left_elbow_conf > 0.1 and left_wrist_conf > 0.1:
+        # Choose wrist or elbow, we are using wrist for y-coordinate
+        current_arm_y = left_wrist_y  # or you can use left_elbow_y
+
+        # Check if the arm has moved up or down compared to the previous position
+        if prev_arm_y is not None:
+            if current_arm_y < prev_arm_y - 0.05:  # Arm moved up
+                if not drone_in_air:
+                    # Takeoff if not already in air
+                    drone.takeoff()  # Use takeoff() to start flying
+                    drone_in_air = True
+                    print("Takeoff initiated!")
+            elif current_arm_y > prev_arm_y + 0.05:  # Arm moved down
+                if drone_in_air:
+                    # Land if drone is in the air
+                    drone.land()  # Use land() to bring the drone down
+                    drone_in_air = False
+                    print("Landing initiated!")
+        
+        # Update the previous arm position for the next iteration
+        prev_arm_y = current_arm_y
+
+# Main loop for pose detection and drone control
 while True:
     # Capture frame-by-frame
     ret, frame = cap.read()
@@ -62,39 +104,11 @@ while True:
     # Detect pose keypoints using MoveNet
     keypoints = detect_pose(frame)
 
-    # Draw keypoints and skeleton on the frame
-    for i, keypoint in enumerate(keypoints):
-        x, y, confidence = keypoint
-        if confidence > 0.1:  # Only consider high-confidence keypoints
-            cv2.circle(frame, (int(x * frame.shape[1]), int(y * frame.shape[0])), 5, (0, 255, 0), -1)
+    # Draw keypoints on the frame (for visualization)
+    frame = draw_keypoints(frame, keypoints)
 
-    # Compare current keypoints with previous ones to detect motion
-    if prev_keypoints is not None:
-        significant_motion_detected = False
-        for i in range(len(keypoints)):
-            x, y, _ = keypoints[i]
-            prev_x, prev_y, _ = prev_keypoints[i]
-
-            if np.abs(x - prev_x) > motion_threshold or np.abs(y - prev_y) > motion_threshold:
-                print(f"Keypoint {i} moved significantly!")
-                significant_motion_detected = True
-                break  # Exit loop after detecting motion
-
-        # Trigger drone action if significant motion is detected
-        if significant_motion_detected:
-            if not drone_in_air:
-                # Take off if not already in air
-                drone.takeoff()
-                drone.up()
-                drone_in_air = True  # Mark the drone as in air
-                print("Motion detected - Drone in the air!")
-            else:
-                # Move the drone forward or perform other actions
-                drone.forward()
-                print("Moving forward in response to motion!")
-
-    # Store the current keypoints for the next iteration
-    prev_keypoints = keypoints
+    # Detect arm position and control the drone
+    detect_arm_and_control(keypoints)
 
     # Display the resulting frame with pose detection
     cv2.imshow('Pose Detection with MoveNet', frame)
