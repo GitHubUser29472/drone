@@ -49,46 +49,74 @@ def draw_keypoints(frame, keypoints):
 
 # Variable to track the drone's air status
 drone_in_air = False
-prev_arm_y = None  # Variable to track the previous arm position
+prev_right_arm_y = None  # Variable to track the previous right arm position
+prev_left_arm_y = None  # Variable to track the previous left arm position
 
-# Function to detect arm position and control drone (takeoff/land)
+# Function to detect arm position and control drone (takeoff/land/move left/right)
 def detect_arm_and_control(keypoints):
-    global drone_in_air, prev_arm_y
+    global drone_in_air, prev_right_arm_y, prev_left_arm_y
 
-    # Get the keypoints for the left arm (elbow and wrist)
-    left_elbow = keypoints[7]  # Left elbow
-    left_wrist = keypoints[9]  # Left wrist
+    # Get the keypoints for the right and left arms (elbow and wrist)
+    right_elbow = keypoints[5]  # Right elbow
+    right_wrist = keypoints[7]  # Right wrist
+    left_elbow = keypoints[6]   # Left elbow
+    left_wrist = keypoints[8]   # Left wrist
     
     # Extract coordinates and confidence from keypoints
+    right_elbow_x, right_elbow_y, right_elbow_conf = right_elbow
+    right_wrist_x, right_wrist_y, right_wrist_conf = right_wrist
     left_elbow_x, left_elbow_y, left_elbow_conf = left_elbow
     left_wrist_x, left_wrist_y, left_wrist_conf = left_wrist
 
     # Debugging output for keypoints
+    print(f"Right Elbow: {right_elbow}")
+    print(f"Right Wrist: {right_wrist}")
     print(f"Left Elbow: {left_elbow}")
     print(f"Left Wrist: {left_wrist}")
 
-    # Ensure the wrist or elbow is visible (confidence > 0.1)
-    if left_elbow_conf > 0.1 and left_wrist_conf > 0.1:
-        # Choose wrist or elbow, we are using wrist for y-coordinate
-        current_arm_y = left_wrist_y  # or you can use left_elbow_y
+    # Ensure wrists or elbows are visible (confidence > 0.1)
+    if right_elbow_conf > 0.1 and right_wrist_conf > 0.1:
+        current_right_arm_y = right_wrist_y  # You can also use right_elbow_y if preferred
 
-        # Check if the arm has moved up or down compared to the previous position
-        if prev_arm_y is not None:
-            if current_arm_y < prev_arm_y - 0.05:  # Arm moved up
+        # Takeoff when right arm goes up
+        if prev_right_arm_y is not None:
+            if current_right_arm_y < prev_right_arm_y - 0.05:  # Right arm moved up
                 if not drone_in_air:
-                    # Takeoff if not already in air
-                    drone.takeoff()  # Use takeoff() to start flying
+                    drone.takeoff()
                     drone_in_air = True
                     print("Takeoff initiated!")
-            elif current_arm_y > prev_arm_y + 0.05:  # Arm moved down
+        
+        prev_right_arm_y = current_right_arm_y
+
+    if left_elbow_conf > 0.1 and left_wrist_conf > 0.1:
+        current_left_arm_y = left_wrist_y  # You can also use left_elbow_y if preferred
+
+        # Land when left arm goes up
+        if prev_left_arm_y is not None:
+            if current_left_arm_y < prev_left_arm_y - 0.05:  # Left arm moved up
                 if drone_in_air:
-                    # Land if drone is in the air
-                    drone.land()  # Use land() to bring the drone down
+                    drone.land()
                     drone_in_air = False
                     print("Landing initiated!")
-        
-        # Update the previous arm position for the next iteration
-        prev_arm_y = current_arm_y
+
+        prev_left_arm_y = current_left_arm_y
+
+    # Move left or right based on hand positions
+    if right_wrist_conf > 0.1:
+        if right_wrist_x < 0.4:  # Right hand to the left
+            drone.move_left(20)  # Move drone left (adjust distance as needed)
+            print("Moving left")
+        elif right_wrist_x > 0.6:  # Right hand to the right
+            drone.move_right(20)  # Move drone right (adjust distance as needed)
+            print("Moving right")
+
+    if left_wrist_conf > 0.1:
+        if left_wrist_x < 0.4:  # Left hand to the left
+            drone.move_left(20)  # Move drone left (adjust distance as needed)
+            print("Moving left")
+        elif left_wrist_x > 0.6:  # Left hand to the right
+            drone.move_right(20)  # Move drone right (adjust distance as needed)
+            print("Moving right")
 
 # Main loop for pose detection and drone control
 while True:
